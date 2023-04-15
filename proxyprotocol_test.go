@@ -1,9 +1,11 @@
 package proxyprotocol
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,7 +18,7 @@ func FuzzParseProtocolHeaderDoesntCrash(f *testing.F) {
 	f.Add([]byte("PROXY UNKNOWN\r\n"))
 
 	f.Fuzz(func(t *testing.T, input []byte) {
-		_, _ = ParseProtocolHeader(input)
+		_, _ = ParseProtocolHeader(bufio.NewReader(bytes.NewReader(input)))
 	})
 }
 
@@ -142,8 +144,11 @@ func TestParseProtocolHeader(t *testing.T) {
 		t.Run(tt.description, func(t *testing.T) {
 			t.Parallel()
 
-			header, err := ParseProtocolHeader([]byte(tt.input))
-			assert.Equal(t, tt.err, err)
+			header, err := ParseProtocolHeader(bufio.NewReader(strings.NewReader(tt.input)))
+
+			if !assert.True(t, errors.Is(err, tt.err)) {
+				t.Fatalf("expected err: %s, but got: %s", tt.err, err)
+			}
 
 			assert.Equal(t, tt.expected, header)
 		})

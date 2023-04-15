@@ -1,6 +1,7 @@
 package proxyprotocol
 
 import (
+	"bufio"
 	"errors"
 	"io"
 	"strconv"
@@ -8,15 +9,15 @@ import (
 
 type parser struct {
 	nextByteIndex int
-	buffer        []byte
+	reader        *bufio.Reader
 }
 
-func newParser(buffer []byte) parser {
-	return parser{nextByteIndex: 0, buffer: buffer}
+func newParser(reader *bufio.Reader) parser {
+	return parser{nextByteIndex: 0, reader: reader}
 }
 
 func (l *parser) readUint16() (uint16, error) {
-	startingIndex := l.nextByteIndex
+	buffer := make([]byte, 0)
 
 	for {
 		nextByte, err := l.peekNextByte()
@@ -31,16 +32,14 @@ func (l *parser) readUint16() (uint16, error) {
 			break
 		}
 
-		_, err = l.nextByte()
+		b, err := l.nextByte()
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
 			return 0, err
 		}
+		buffer = append(buffer, b)
 	}
 
-	n, err := strconv.ParseUint(string(l.buffer[startingIndex:l.nextByteIndex]), 10, 16)
+	n, err := strconv.ParseUint(string(buffer), 10, 16)
 	if err != nil {
 		return 0, err
 	}
@@ -48,10 +47,11 @@ func (l *parser) readUint16() (uint16, error) {
 }
 
 func (l *parser) peekNextByte() (byte, error) {
-	if l.nextByteIndex >= len(l.buffer) {
-		return 0, io.EOF
+	buffer, err := l.reader.Peek(1)
+	if err != nil {
+		return 0, err
 	}
-	return l.buffer[l.nextByteIndex], nil
+	return buffer[0], nil
 }
 
 func (l *parser) readBytes(n int) ([]byte, error) {
@@ -69,33 +69,43 @@ func (l *parser) readBytes(n int) ([]byte, error) {
 }
 
 func (l *parser) nextByte() (byte, error) {
-	if l.nextByteIndex >= len(l.buffer) {
-		return 0, io.EOF
+	b, err := l.reader.ReadByte()
+	if err != nil {
+		return 0, err
 	}
-	index := l.nextByteIndex
-	l.nextByteIndex++
-	return l.buffer[index], nil
+	l.nextByteIndex += 1
+	return b, nil
 }
 
-func (l *parser) readUntilByteSequence(sequence []byte) ([]byte, error) {
-loop:
-	startingIndex := l.nextByteIndex
+func (l *parser) readUntilCRLF() ([]byte, error) {
+	buffer := make([]byte, 0)
 
-	for _, expectedByte := range sequence {
+	for {
 		b, err := l.nextByte()
 		if err != nil {
-			return []byte{}, err
+			return buffer, err
 		}
-		if b != expectedByte {
-			goto loop
-		}
-	}
 
-	return l.buffer[startingIndex:l.nextByteIndex], nil
+		if b == '\r' {
+			nextByte, err := l.peekNextByte()
+			if err != nil {
+				return buffer, err
+			}
+			if nextByte == '\n' {
+				// Consume '\n'
+				_, err := l.nextByte()
+				if err != nil {
+					return buffer, err
+				}
+				return buffer, nil
+			}
+		}
+
+	}
 }
 
 func (l *parser) readUntilDelimiter(delimiter byte) ([]byte, error) {
-	startingIndex := l.nextByteIndex
+	buffer := make([]byte, 0)
 
 	for {
 		nextByte, err := l.peekNextByte()
@@ -103,13 +113,14 @@ func (l *parser) readUntilDelimiter(delimiter byte) ([]byte, error) {
 			return []byte{}, err
 		}
 		if nextByte == delimiter {
-			return l.buffer[startingIndex:l.nextByteIndex], nil
+			return buffer, nil
 		}
 
-		_, err = l.nextByte()
+		b, err := l.nextByte()
 		if err != nil {
 			return []byte{}, err
 		}
+		buffer = append(buffer, b)
 	}
 }
 

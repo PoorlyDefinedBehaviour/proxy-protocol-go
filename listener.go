@@ -1,6 +1,7 @@
 package proxyprotocol
 
 import (
+	"bufio"
 	"net"
 	"time"
 )
@@ -13,6 +14,7 @@ type ListenerAdapter struct {
 type connAdapter struct {
 	remoteAddr net.Addr
 	conn       net.Conn
+	connReader *bufio.Reader
 }
 
 func (adapter *ListenerAdapter) Accept() (net.Conn, error) {
@@ -36,26 +38,20 @@ func newConnAdapter(conn net.Conn, proxyProtocolHeaderReadTimeout time.Duration)
 		conn.SetReadDeadline(time.Now().Add(proxyProtocolHeaderReadTimeout))
 	}
 
-	buffer := make([]byte, maxBytesForProtocolVersion1)
-	bytesRead, err := conn.Read(buffer)
-	if err != nil {
-		return nil, err
-	}
+	connReader := bufio.NewReader(conn)
 
-	buffer = buffer[:bytesRead]
-
-	header, err := ParseProtocolHeader(buffer)
+	header, err := ParseProtocolHeader(connReader)
 	if err != nil {
 		return nil, err
 	}
 
 	addr := &net.TCPAddr{IP: header.src, Port: int(header.srcPort)}
 
-	return &connAdapter{remoteAddr: addr, conn: conn}, nil
+	return &connAdapter{remoteAddr: addr, conn: conn, connReader: connReader}, nil
 }
 
 func (adapter *connAdapter) Read(b []byte) (n int, err error) {
-	return adapter.conn.Read(b)
+	return adapter.connReader.Read(b)
 }
 
 func (adapter *connAdapter) Write(b []byte) (n int, err error) {

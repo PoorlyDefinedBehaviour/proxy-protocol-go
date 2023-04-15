@@ -61,24 +61,26 @@ func TestListener(t *testing.T) {
 			remoteAddr net.Addr
 			payload    string
 		}
+
 		dataChan := make(chan data)
 
 		go func() {
 			serverConn, err := listener.Accept()
-			assert.NoError(t, err)
+			if err != nil {
+				panic(err)
+			}
 			defer serverConn.Close()
 			buffer := make([]byte, 5)
 			_, err = serverConn.Read(buffer)
-			assert.NoError(t, err)
+			if err != nil {
+				panic(err)
+			}
 			dataChan <- data{remoteAddr: serverConn.RemoteAddr(), payload: string(buffer)}
 		}()
 
 		clientConn, err := net.Dial("tcp", serverAddr)
 		assert.NoError(t, err)
 		defer clientConn.Close()
-
-		_, err = clientConn.Write([]byte("hello"))
-		assert.NoError(t, err)
 
 		header := header{
 			version:      protocolVersion1,
@@ -89,16 +91,21 @@ func TestListener(t *testing.T) {
 			destPort:     8081,
 		}
 
-		WriteHeader(header, clientConn)
+		assert.NoError(t, WriteHeader(header, clientConn))
+
+		_, err = clientConn.Write([]byte("hello"))
+		assert.NoError(t, err)
 
 		require.Eventuallyf(t, func() bool {
 			data := <-dataChan
 			tcpAddr := data.remoteAddr.(*net.TCPAddr)
+
 			return tcpAddr.IP.Equal(header.src) && tcpAddr.Port == int(header.srcPort) && data.payload == "hello"
 		},
-			100*time.Millisecond,
+			500*time.Millisecond,
 			10*time.Millisecond,
 			"server should receive a connection with the remote addr that came in the proxy protocol header",
 		)
 	})
+
 }

@@ -9,8 +9,6 @@ import (
 	"strconv"
 )
 
-const PROXY_WORD_LENGTH = 5
-
 const minBytesForProtocolVersion1 = 8
 const maxBytesForProtocolVersion1 = 107
 
@@ -30,33 +28,41 @@ var (
 type protocolVersion byte
 
 const (
-	protocolVersion1 = iota
-	protocolVersion2 = iota
+	protocolVersion1 = 1
+	protocolVersion2 = 2
 )
 
 type header struct {
-	version  protocolVersion
-	srcPort  uint16
-	destPort uint16
-	src      net.IP
-	dest     net.IP
+	version      protocolVersion
+	srcPort      uint16
+	destPort     uint16
+	inetProtocol string
+	src          net.IP
+	dest         net.IP
 }
 
-func handleConnection(conn net.Conn) error {
-	buffer := make([]byte, 108)
-
-	bytesRead, err := conn.Read(buffer)
-
-	buffer = buffer[:bytesRead]
-
-	fmt.Printf("\n\naaaaaaa bytesRead %+v\n\n", bytesRead)
-	fmt.Printf("\n\naaaaaaa err %+v\n\n", err)
-
-	fmt.Printf("\n\naaaaaaa string(buffer) %+v\n\n", string(buffer))
+func WriteHeader(header header, writer io.Writer) error {
+	switch header.version {
+	case protocolVersion1:
+		_, err := writer.Write([]byte(
+			fmt.Sprintf("PROXY %s %s %s %d %d\r\n",
+				header.inetProtocol,
+				header.src,
+				header.dest,
+				header.srcPort, header.destPort,
+			)))
+		if err != nil {
+			return err
+		}
+	case protocolVersion2:
+		panic("TODO")
+	default:
+		return fmt.Errorf("unexpected protocol version: %d: %w", header.version, ErrInvalidProtocolHeader)
+	}
 	return nil
 }
 
-func parseProtocolHeader(buffer []byte) (header, error) {
+func ParseProtocolHeader(buffer []byte) (header, error) {
 	lexer := newLexer(buffer)
 
 	if isProtocolVersion2(buffer) {
@@ -71,121 +77,105 @@ func parseProtocolHeader(buffer []byte) (header, error) {
 			return header{}, err
 		}
 		if !bytes.Equal(signature, protocolVersion1HeaderSignature) {
-			fmt.Printf("\n\naaaaaaa signature does not match %+v\n\n", string(signature))
 			return header{}, ErrInvalidProtocolHeader
 		}
 
 		// Followed by a single whitespace.
 		if err := lexer.expectByte(' '); err != nil {
-			fmt.Printf("\n\naaaaaaa line 78 expected whitespace\n\n")
 			return header{}, err
 		}
 
 		// Followed by a the INET protocol and family.
 		inetProtocolAndFamily, err := lexer.readUntilDelimiter(' ')
 		if err != nil {
-			fmt.Printf("\n\naaaaaaa line 85 invalid inetProtocolAndFamily\n\n")
 			return header{}, err
 		}
 
 		if !isValidProtocolVersion1InetProtocolAndFamily(string(inetProtocolAndFamily)) {
-			fmt.Printf("\n\naaaaaaa inetProtocolAndFamily '%+v'\n\n", inetProtocolAndFamily)
-			fmt.Printf("\n\naaaaaaa len(inetProtocolAndFamily) %+v\n\n", len(inetProtocolAndFamily))
-			fmt.Printf("\n\naaaaaaa line 89 invalid inetProtocolAndFamily\n\n")
 			return header{}, ErrInvalidProtocolHeader
+		}
+
+		if bytes.Equal(inetProtocolAndFamily, []byte(protocolVersion1Unknown)) {
+			if _, err := lexer.readUntilByteSequence([]byte{'\r', '\n'}); err != nil {
+				return header{}, ErrInvalidProtocolHeader
+			}
+			return header{
+					version:      protocolVersion1,
+					inetProtocol: string(inetProtocolAndFamily),
+					src:          nil,
+					dest:         nil,
+					srcPort:      0,
+					destPort:     0,
+				},
+				nil
 		}
 
 		// Followed by a single whitespace.
 		if err := lexer.expectByte(' '); err != nil {
-			fmt.Printf("\n\naaaaaaa line 78 expected whitespace\n\n")
 			return header{}, err
 		}
 
 		// Followed by the layer 3 source address.
 		srcAddress, err := lexer.readUntilDelimiter(' ')
 		if err != nil {
-			fmt.Printf("\n\naaaaaaa error reading srcAddress\n\n")
 			return header{}, err
 		}
 		srcIP := net.ParseIP(string(srcAddress))
 		if srcIP == nil {
-			fmt.Printf("\n\naaaaaaa error parsing src ip\n\n")
 			return header{}, ErrInvalidProtocolHeader
 		}
 
 		// Followed by a single whitespace.
 		if err := lexer.expectByte(' '); err != nil {
-			fmt.Printf("\n\naaaaaaa line 113 expected whitespace\n\n")
 			return header{}, err
 		}
 
 		// Followed by the layer 3 destination address.
 		destAddress, err := lexer.readUntilDelimiter(' ')
 		if err != nil {
-			fmt.Printf("\n\naaaaaaa error reading destAddress\n\n")
 			return header{}, err
 		}
 		destIP := net.ParseIP(string(destAddress))
 		if destIP == nil {
-			fmt.Printf("\n\naaaaaaa error parsing srcAddress\n\n")
 			return header{}, ErrInvalidProtocolHeader
 		}
 
 		// Followed by a single whitespace.
 		if err := lexer.expectByte(' '); err != nil {
-			fmt.Printf("\n\naaaaaaa line 131 expected whitespace\n\n")
 			return header{}, err
 		}
-
-		fmt.Printf("\n\naaaaaaa before reading srcPort\n\n")
-		lexer.debugBuffer()
 
 		srcPort, err := lexer.readUint16()
 		if err != nil {
-			fmt.Printf("\n\naaaaaaa error src port\n\n")
 			return header{}, err
 		}
-
-		fmt.Printf("\n\naaaaaaa after reading srcPort\n\n")
-		lexer.debugBuffer()
 
 		// Followed by a single whitespace.
 		if err := lexer.expectByte(' '); err != nil {
-			fmt.Printf("\n\naaaaaaa line 146 expected whitespace\n\n")
 			return header{}, err
 		}
-
-		fmt.Printf("\n\naaaaaaa before reading destPort\n\n")
-		lexer.debugBuffer()
 
 		destPort, err := lexer.readUint16()
 		if err != nil {
-			fmt.Printf("\n\naaaaaaa error dest port: '%+v'\n\n", err)
 			return header{}, err
 		}
 
-		fmt.Printf("\n\naaaaaaa after reading destPort\n\n")
-		lexer.debugBuffer()
-
-		// Followed by a single whitespace.
-		if err := lexer.expectByte(' '); err != nil {
-			fmt.Printf("\n\naaaaaaa line 160 expected whitespace\n\n")
-			return header{}, err
-		}
-
-		fmt.Printf("\n\naaaaaaa after line 162 \n\n")
-		lexer.debugBuffer()
-
-		fmt.Printf("\n\naaaaaaa lexer.buffer %+v\n\n", string(lexer.buffer[lexer.nextByteIndex:]))
+		// Followed by \r\n
 		if err := lexer.expectCRLF(); err != nil {
-			fmt.Printf("\n\naaaaaaa expected CRLF\n\n")
 			return header{}, err
 		}
 
-		return header{version: protocolVersion1, src: srcIP, dest: destIP, srcPort: srcPort, destPort: destPort}, nil
+		return header{
+				version:      protocolVersion1,
+				inetProtocol: string(inetProtocolAndFamily),
+				src:          srcIP,
+				dest:         destIP,
+				srcPort:      srcPort,
+				destPort:     destPort,
+			},
+			nil
 	}
 
-	fmt.Printf("\n\naaaaaaa  protocol is not version 1 nor 2")
 	return header{}, ErrInvalidProtocolHeader
 }
 
@@ -196,10 +186,6 @@ type lexer struct {
 
 func newLexer(buffer []byte) lexer {
 	return lexer{nextByteIndex: 0, buffer: buffer}
-}
-
-func (l *lexer) debugBuffer() {
-	fmt.Printf("\n\naaaaaaa l.buffer '%+v'\n\n", string(l.buffer[l.nextByteIndex:]))
 }
 
 func (l *lexer) readUint16() (uint16, error) {
@@ -251,7 +237,7 @@ func (l *lexer) readBytes(n int) ([]byte, error) {
 		}
 		bytes = append(bytes, b)
 	}
-	fmt.Printf("\n\naaaaaaa *l %+v\n\n", *l)
+
 	return bytes, nil
 }
 
@@ -262,6 +248,23 @@ func (l *lexer) nextByte() (byte, error) {
 	index := l.nextByteIndex
 	l.nextByteIndex++
 	return l.buffer[index], nil
+}
+
+func (l *lexer) readUntilByteSequence(sequence []byte) ([]byte, error) {
+loop:
+	startingIndex := l.nextByteIndex
+
+	for _, expectedByte := range sequence {
+		b, err := l.nextByte()
+		if err != nil {
+			return []byte{}, err
+		}
+		if b != expectedByte {
+			goto loop
+		}
+	}
+
+	return l.buffer[startingIndex:l.nextByteIndex], nil
 }
 
 func (l *lexer) readUntilDelimiter(delimiter byte) ([]byte, error) {
@@ -299,7 +302,6 @@ func (l *lexer) expectByte(expectedByte byte) error {
 		return err
 	}
 	if b != expectedByte {
-		fmt.Printf("\n\naaaaaaa expectedByte read byte: %+v but expected: %+v\n\n", string(b), string(expectedByte))
 		return ErrInvalidProtocolHeader
 	}
 	return nil
@@ -310,7 +312,6 @@ func isValidProtocolVersion1InetProtocolAndFamily(v string) bool {
 }
 
 func isProtocolVersion1(buffer []byte) bool {
-	fmt.Printf("\n\naaaaaaa len(buffer) %+v\n\n", len(buffer))
 	return len(buffer) >= minBytesForProtocolVersion1 && len(buffer) <= maxBytesForProtocolVersion1 &&
 		bytes.Equal(buffer[:len(protocolVersion1HeaderSignature)], protocolVersion1HeaderSignature)
 }

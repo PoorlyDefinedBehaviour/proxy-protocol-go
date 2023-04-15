@@ -1,6 +1,6 @@
 ## About
 
-PROXY protocol version 1 parser.
+PROXY protocol version 1 parser and `net.Listener` adapter.
 
 ## Examples
 

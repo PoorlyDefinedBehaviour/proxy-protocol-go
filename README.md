@@ -2,6 +2,12 @@
 
 PROXY protocol version 1 parser and `net.Listener` adapter.
 
+## Install
+
+```
+go get github.com/poorlydefinedbehaviour/proxy-protocol-go
+```
+
 ## Examples
 
 ### Parsing the protocol header

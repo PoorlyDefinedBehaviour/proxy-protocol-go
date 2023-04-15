@@ -30,6 +30,29 @@ if err := proxyprotocol.WriteHeader(header, conn); err != nil {
 }
 ```
 
+### Wrapping a net.Listener
+
+```go
+ln, err := net.Listen("tcp", "localhost:9879")
+if err != nil {
+  return err
+}
+
+listener := proxyprotocol.ListenerAdapter{
+  Listener: ln,
+  // If the listener does not receive the proxy protocol header from a connection
+  // after `ProxyProtocolHeaderReadTimeout`, an error is returned by `Accept`.
+  ProxyProtocolHeaderReadTimeout: 5 * time.Second
+}
+
+conn, err := listener.Accept()
+if err != nil {
+  return err
+}
+defer conn.Close()
+```
+
+
 ## References
 
 https://www.haproxy.org/download/2.3/doc/proxy-protocol.txt

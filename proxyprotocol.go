@@ -62,7 +62,7 @@ func WriteHeader(header header, writer io.Writer) error {
 }
 
 func ParseProtocolHeader(buffer []byte) (header, error) {
-	lexer := newLexer(buffer)
+	parser := newParser(buffer)
 
 	if isProtocolVersion2(buffer) {
 		panic("TODO")
@@ -71,7 +71,7 @@ func ParseProtocolHeader(buffer []byte) (header, error) {
 	// Example header: PROXY TCP4 255.255.255.255 255.255.255.255 65535 65535\r\n
 	if isProtocolVersion1(buffer) {
 		// The header must start with `PROXY`.
-		signature, err := lexer.readBytes(len(protocolVersion1HeaderSignature))
+		signature, err := parser.readBytes(len(protocolVersion1HeaderSignature))
 		if err != nil {
 			return header{}, err
 		}
@@ -80,12 +80,12 @@ func ParseProtocolHeader(buffer []byte) (header, error) {
 		}
 
 		// Followed by a single whitespace.
-		if err := lexer.expectByte(' '); err != nil {
+		if err := parser.expectByte(' '); err != nil {
 			return header{}, err
 		}
 
 		// Followed by a the INET protocol and family.
-		inetProtocolAndFamily, err := lexer.readUntilDelimiter(' ')
+		inetProtocolAndFamily, err := parser.readUntilDelimiter(' ')
 		if err != nil {
 			return header{}, err
 		}
@@ -95,7 +95,7 @@ func ParseProtocolHeader(buffer []byte) (header, error) {
 		}
 
 		if bytes.Equal(inetProtocolAndFamily, []byte(protocolVersion1Unknown)) {
-			if _, err := lexer.readUntilByteSequence([]byte{'\r', '\n'}); err != nil {
+			if _, err := parser.readUntilByteSequence([]byte{'\r', '\n'}); err != nil {
 				return header{}, ErrInvalidProtocolHeader
 			}
 			return header{
@@ -110,12 +110,12 @@ func ParseProtocolHeader(buffer []byte) (header, error) {
 		}
 
 		// Followed by a single whitespace.
-		if err := lexer.expectByte(' '); err != nil {
+		if err := parser.expectByte(' '); err != nil {
 			return header{}, err
 		}
 
 		// Followed by the layer 3 source address.
-		srcAddress, err := lexer.readUntilDelimiter(' ')
+		srcAddress, err := parser.readUntilDelimiter(' ')
 		if err != nil {
 			return header{}, err
 		}
@@ -125,12 +125,12 @@ func ParseProtocolHeader(buffer []byte) (header, error) {
 		}
 
 		// Followed by a single whitespace.
-		if err := lexer.expectByte(' '); err != nil {
+		if err := parser.expectByte(' '); err != nil {
 			return header{}, err
 		}
 
 		// Followed by the layer 3 destination address.
-		destAddress, err := lexer.readUntilDelimiter(' ')
+		destAddress, err := parser.readUntilDelimiter(' ')
 		if err != nil {
 			return header{}, err
 		}
@@ -140,27 +140,27 @@ func ParseProtocolHeader(buffer []byte) (header, error) {
 		}
 
 		// Followed by a single whitespace.
-		if err := lexer.expectByte(' '); err != nil {
+		if err := parser.expectByte(' '); err != nil {
 			return header{}, err
 		}
 
-		srcPort, err := lexer.readUint16()
+		srcPort, err := parser.readUint16()
 		if err != nil {
 			return header{}, err
 		}
 
 		// Followed by a single whitespace.
-		if err := lexer.expectByte(' '); err != nil {
+		if err := parser.expectByte(' '); err != nil {
 			return header{}, err
 		}
 
-		destPort, err := lexer.readUint16()
+		destPort, err := parser.readUint16()
 		if err != nil {
 			return header{}, err
 		}
 
 		// Followed by \r\n
-		if err := lexer.expectCRLF(); err != nil {
+		if err := parser.expectCRLF(); err != nil {
 			return header{}, err
 		}
 

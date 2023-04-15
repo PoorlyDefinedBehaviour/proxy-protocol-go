@@ -6,16 +6,16 @@ import (
 	"strconv"
 )
 
-type lexer struct {
+type parser struct {
 	nextByteIndex int
 	buffer        []byte
 }
 
-func newLexer(buffer []byte) lexer {
-	return lexer{nextByteIndex: 0, buffer: buffer}
+func newParser(buffer []byte) parser {
+	return parser{nextByteIndex: 0, buffer: buffer}
 }
 
-func (l *lexer) readUint16() (uint16, error) {
+func (l *parser) readUint16() (uint16, error) {
 	startingIndex := l.nextByteIndex
 
 	for {
@@ -47,14 +47,14 @@ func (l *lexer) readUint16() (uint16, error) {
 	return uint16(n), nil
 }
 
-func (l *lexer) peekNextByte() (byte, error) {
+func (l *parser) peekNextByte() (byte, error) {
 	if l.nextByteIndex >= len(l.buffer) {
 		return 0, io.EOF
 	}
 	return l.buffer[l.nextByteIndex], nil
 }
 
-func (l *lexer) readBytes(n int) ([]byte, error) {
+func (l *parser) readBytes(n int) ([]byte, error) {
 	bytes := make([]byte, 0, n)
 
 	for i := 0; i < n; i++ {
@@ -68,7 +68,7 @@ func (l *lexer) readBytes(n int) ([]byte, error) {
 	return bytes, nil
 }
 
-func (l *lexer) nextByte() (byte, error) {
+func (l *parser) nextByte() (byte, error) {
 	if l.nextByteIndex >= len(l.buffer) {
 		return 0, io.EOF
 	}
@@ -77,7 +77,7 @@ func (l *lexer) nextByte() (byte, error) {
 	return l.buffer[index], nil
 }
 
-func (l *lexer) readUntilByteSequence(sequence []byte) ([]byte, error) {
+func (l *parser) readUntilByteSequence(sequence []byte) ([]byte, error) {
 loop:
 	startingIndex := l.nextByteIndex
 
@@ -94,7 +94,7 @@ loop:
 	return l.buffer[startingIndex:l.nextByteIndex], nil
 }
 
-func (l *lexer) readUntilDelimiter(delimiter byte) ([]byte, error) {
+func (l *parser) readUntilDelimiter(delimiter byte) ([]byte, error) {
 	startingIndex := l.nextByteIndex
 
 	for {
@@ -113,7 +113,7 @@ func (l *lexer) readUntilDelimiter(delimiter byte) ([]byte, error) {
 	}
 }
 
-func (l *lexer) expectCRLF() error {
+func (l *parser) expectCRLF() error {
 	if err := l.expectByte('\r'); err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func (l *lexer) expectCRLF() error {
 	return nil
 }
 
-func (l *lexer) expectByte(expectedByte byte) error {
+func (l *parser) expectByte(expectedByte byte) error {
 	b, err := l.nextByte()
 	if err != nil {
 		return err

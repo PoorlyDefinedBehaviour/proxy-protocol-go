@@ -57,18 +57,28 @@ func TestListener(t *testing.T) {
 			ProxyProtocolHeaderReadTimeout: 5 * time.Second,
 		}
 
-		remoteAddrChan := make(chan net.Addr)
+		type data struct {
+			remoteAddr net.Addr
+			payload    string
+		}
+		dataChan := make(chan data)
 
 		go func() {
 			serverConn, err := listener.Accept()
 			assert.NoError(t, err)
 			defer serverConn.Close()
-			remoteAddrChan <- serverConn.RemoteAddr()
+			buffer := make([]byte, 5)
+			_, err = serverConn.Read(buffer)
+			assert.NoError(t, err)
+			dataChan <- data{remoteAddr: serverConn.RemoteAddr(), payload: string(buffer)}
 		}()
 
 		clientConn, err := net.Dial("tcp", serverAddr)
 		assert.NoError(t, err)
 		defer clientConn.Close()
+
+		_, err = clientConn.Write([]byte("hello"))
+		assert.NoError(t, err)
 
 		header := header{
 			version:      protocolVersion1,
@@ -82,9 +92,9 @@ func TestListener(t *testing.T) {
 		WriteHeader(header, clientConn)
 
 		require.Eventuallyf(t, func() bool {
-			remoteAddr := <-remoteAddrChan
-			tcpAddr := remoteAddr.(*net.TCPAddr)
-			return tcpAddr.IP.Equal(header.src) && tcpAddr.Port == int(header.srcPort)
+			data := <-dataChan
+			tcpAddr := data.remoteAddr.(*net.TCPAddr)
+			return tcpAddr.IP.Equal(header.src) && tcpAddr.Port == int(header.srcPort) && data.payload == "hello"
 		},
 			100*time.Millisecond,
 			10*time.Millisecond,

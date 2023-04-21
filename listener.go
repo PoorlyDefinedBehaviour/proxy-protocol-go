@@ -2,6 +2,7 @@ package proxyprotocol
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -43,11 +44,7 @@ func newConnAdapter(conn net.Conn, proxyProtocolHeaderReadTimeout time.Duration)
 		if proxyProtocolHeaderReadTimeout > 0 {
 			setReadDeadlineErr := conn.SetReadDeadline(time.Time{})
 			if setReadDeadlineErr != nil {
-				if err == nil {
-					err = fmt.Errorf("error setting conn deadline to no deadline: %w", setReadDeadlineErr)
-				} else {
-					err = fmt.Errorf("error setting conn deadline to no deadline: %w: %w", setReadDeadlineErr, err)
-				}
+				err = fmt.Errorf("error setting conn deadline to no deadline: %w", errors.Join(setReadDeadlineErr, err))
 			}
 		}
 	}()

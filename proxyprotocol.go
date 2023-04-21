@@ -67,7 +67,7 @@ func ParseProtocolHeader(reader *bufio.Reader) (Header, error) {
 	// Example header: PROXY TCP4 255.255.255.255 255.255.255.255 65535 65535\r\n
 	isVersion1, err := isProtocolVersion1(reader)
 	if err != nil {
-		return Header{}, fmt.Errorf("error checking if protocol is version 1: %w: %w", err, ErrInvalidProtocolHeader)
+		return Header{}, fmt.Errorf("error checking if protocol is version 1: %s: %w", err.Error(), ErrInvalidProtocolHeader)
 	}
 
 	if isVersion1 {
@@ -82,7 +82,7 @@ func ParseProtocolHeader(reader *bufio.Reader) (Header, error) {
 
 		// Followed by a single whitespace.
 		if err := parser.expectByte(' '); err != nil {
-			return Header{}, fmt.Errorf("expected whitespace after version 1 signature:%w", err)
+			return Header{}, fmt.Errorf("expected whitespace after version 1 signature: %w", err)
 		}
 
 		// Followed by a the INET protocol and family.

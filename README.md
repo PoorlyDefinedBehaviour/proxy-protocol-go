@@ -58,6 +58,25 @@ if err != nil {
 defer conn.Close()
 ```
 
+### Creating a http server that expects the PROXY protocol header before http requests
+
+```go
+ln, err := net.Listen("tcp", "localhost:9879")
+if err != nil {
+  return err
+}
+
+listener := proxyprotocol.ListenerAdapter{
+  Listener: ln,
+  // If the listener does not receive the proxy protocol header from a connection
+  // after `ProxyProtocolHeaderReadTimeout`, an error is returned by `Accept`.
+  ProxyProtocolHeaderReadTimeout: 5 * time.Second
+}
+
+if err := http.Serve(&listener, handler); err != nil {
+  panic(err)
+}
+```
 
 ## References
 

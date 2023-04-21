@@ -2,6 +2,7 @@ package proxyprotocol
 
 import (
 	"bufio"
+	"fmt"
 	"net"
 	"time"
 )
@@ -12,7 +13,7 @@ type ListenerAdapter struct {
 }
 
 type connAdapter struct {
-	remoteAddr net.Addr
+	header     Header
 	conn       net.Conn
 	connReader *bufio.Reader
 }
@@ -22,6 +23,7 @@ func (adapter *ListenerAdapter) Accept() (net.Conn, error) {
 	if err != nil {
 		return conn, err
 	}
+
 	return newConnAdapter(conn, adapter.ProxyProtocolHeaderReadTimeout)
 }
 
@@ -33,25 +35,43 @@ func (adapter *ListenerAdapter) Addr() net.Addr {
 	return adapter.Listener.Addr()
 }
 
-func newConnAdapter(conn net.Conn, proxyProtocolHeaderReadTimeout time.Duration) (net.Conn, error) {
+func newConnAdapter(conn net.Conn, proxyProtocolHeaderReadTimeout time.Duration) (newConn net.Conn, err error) {
 	if proxyProtocolHeaderReadTimeout > 0 {
 		conn.SetReadDeadline(time.Now().Add(proxyProtocolHeaderReadTimeout))
 	}
+	defer func() {
+		if proxyProtocolHeaderReadTimeout > 0 {
+			setReadDeadlineErr := conn.SetReadDeadline(time.Time{})
+			if setReadDeadlineErr != nil {
+				if err == nil {
+					err = fmt.Errorf("error setting conn deadline to no deadline: %w", setReadDeadlineErr)
+				} else {
+					err = fmt.Errorf("error setting conn deadline to no deadline: %w: %w", setReadDeadlineErr, err)
+				}
+			}
+		}
+	}()
 
 	connReader := bufio.NewReader(conn)
 
 	header, err := ParseProtocolHeader(connReader)
 	if err != nil {
-		return nil, err
+
+		return nil, fmt.Errorf("error parsing proxy protocol header during Read([]byte) call: %w", err)
 	}
 
-	addr := &net.TCPAddr{IP: header.src, Port: int(header.srcPort)}
+	newConn = &connAdapter{header: header, conn: conn, connReader: connReader}
 
-	return &connAdapter{remoteAddr: addr, conn: conn, connReader: connReader}, nil
+	return newConn, err
 }
 
 func (adapter *connAdapter) Read(b []byte) (n int, err error) {
-	return adapter.connReader.Read(b)
+	n, err = adapter.connReader.Read(b)
+	if err != nil {
+		return n, fmt.Errorf("error reading connection: %w", err)
+	}
+
+	return n, err
 }
 
 func (adapter *connAdapter) Write(b []byte) (n int, err error) {
@@ -67,7 +87,7 @@ func (adapter *connAdapter) LocalAddr() net.Addr {
 }
 
 func (adapter *connAdapter) RemoteAddr() net.Addr {
-	return adapter.remoteAddr
+	return &adapter.header.Src
 }
 
 func (adapter *connAdapter) SetDeadline(t time.Time) error {

@@ -28,155 +28,151 @@ var (
 type protocolVersion byte
 
 const (
-	protocolVersion1 = 1
-	protocolVersion2 = 2
+	ProtocolVersion1 = 1
+	ProtocolVersion2 = 2
 )
 
-type header struct {
-	version      protocolVersion
-	srcPort      uint16
-	destPort     uint16
-	inetProtocol string
-	src          net.IP
-	dest         net.IP
+type Header struct {
+	Version    protocolVersion
+	InetFamily string
+	Src        net.TCPAddr
+	Dest       net.TCPAddr
 }
 
-func WriteHeader(header header, writer io.Writer) error {
-	switch header.version {
-	case protocolVersion1:
+func WriteHeader(header Header, writer io.Writer) error {
+	switch header.Version {
+	case ProtocolVersion1:
 		_, err := writer.Write([]byte(
 			fmt.Sprintf("PROXY %s %s %s %d %d\r\n",
-				header.inetProtocol,
-				header.src,
-				header.dest,
-				header.srcPort, header.destPort,
+				header.InetFamily,
+				header.Src.IP,
+				header.Dest.IP,
+				header.Src.Port,
+				header.Dest.Port,
 			)))
 		if err != nil {
 			return err
 		}
-	case protocolVersion2:
+	case ProtocolVersion2:
 		panic("TODO")
 	default:
-		return fmt.Errorf("unexpected protocol version: %d: %w", header.version, ErrInvalidProtocolHeader)
+		return fmt.Errorf("unexpected protocol version: %d: %w", header.Version, ErrInvalidProtocolHeader)
 	}
 	return nil
 }
 
-func ParseProtocolHeader(reader *bufio.Reader) (header, error) {
+func ParseProtocolHeader(reader *bufio.Reader) (Header, error) {
 	parser := newParser(reader)
 
 	// Example header: PROXY TCP4 255.255.255.255 255.255.255.255 65535 65535\r\n
 	isVersion1, err := isProtocolVersion1(reader)
 	if err != nil {
-		return header{}, fmt.Errorf("error checking if protocol is version 1: %w: %w", err, ErrInvalidProtocolHeader)
+		return Header{}, fmt.Errorf("error checking if protocol is version 1: %w: %w", err, ErrInvalidProtocolHeader)
 	}
+
 	if isVersion1 {
 		// The header must start with `PROXY`.
 		signature, err := parser.readBytes(len(protocolVersion1HeaderSignature))
 		if err != nil {
-			return header{}, fmt.Errorf("error reading version 1 signature bytes: %w", err)
+			return Header{}, fmt.Errorf("error reading version 1 signature bytes: %w", err)
 		}
 		if !bytes.Equal(signature, protocolVersion1HeaderSignature) {
-			return header{}, fmt.Errorf("invalid version 1 signature: %w", ErrInvalidProtocolHeader)
+			return Header{}, fmt.Errorf("invalid version 1 signature: %w", ErrInvalidProtocolHeader)
 		}
 
 		// Followed by a single whitespace.
 		if err := parser.expectByte(' '); err != nil {
-			return header{}, fmt.Errorf("expected whitespace after version 1 signature:%w", err)
+			return Header{}, fmt.Errorf("expected whitespace after version 1 signature:%w", err)
 		}
 
 		// Followed by a the INET protocol and family.
 		inetProtocolAndFamily, err := parser.readUntilDelimiter(' ')
 		if err != nil {
-			return header{}, fmt.Errorf("error reading inet protocol and family bytes: %w", err)
+			return Header{}, fmt.Errorf("error reading inet protocol and family bytes: %w", err)
 		}
 
 		if !isValidProtocolVersion1InetProtocolAndFamily(string(inetProtocolAndFamily)) {
-			return header{}, fmt.Errorf("invalid inet protocol and family: %w", ErrInvalidProtocolHeader)
+			return Header{}, fmt.Errorf("invalid inet protocol and family: %w", ErrInvalidProtocolHeader)
 		}
 
 		if bytes.Equal(inetProtocolAndFamily, []byte(protocolVersion1Unknown)) {
 			if _, err := parser.readUntilCRLF(); err != nil {
-				return header{}, fmt.Errorf("error reading bytes until \r\n is found after finding unknown protocol version: %w", ErrInvalidProtocolHeader)
+				return Header{}, fmt.Errorf("error reading bytes until \r\n is found after finding unknown protocol version: %w", ErrInvalidProtocolHeader)
 			}
-			return header{
-					version:      protocolVersion1,
-					inetProtocol: string(inetProtocolAndFamily),
-					src:          nil,
-					dest:         nil,
-					srcPort:      0,
-					destPort:     0,
+			return Header{
+					Version:    ProtocolVersion1,
+					InetFamily: string(inetProtocolAndFamily),
+					Src:        net.TCPAddr{},
+					Dest:       net.TCPAddr{},
 				},
 				nil
 		}
 
 		// Followed by a single whitespace.
 		if err := parser.expectByte(' '); err != nil {
-			return header{}, fmt.Errorf("expected whitespace after inet protocol and family: %w", err)
+			return Header{}, fmt.Errorf("expected whitespace after inet protocol and family: %w", err)
 		}
 
 		// Followed by the layer 3 source address.
 		srcAddress, err := parser.readUntilDelimiter(' ')
 		if err != nil {
-			return header{}, fmt.Errorf("error reading source address bytes:%w", err)
+			return Header{}, fmt.Errorf("error reading source address bytes:%w", err)
 		}
 		srcIP := net.ParseIP(string(srcAddress))
 		if srcIP == nil {
-			return header{}, fmt.Errorf("error parsing source address: %w", ErrInvalidProtocolHeader)
+			return Header{}, fmt.Errorf("error parsing source address: %w", ErrInvalidProtocolHeader)
 		}
 
 		// Followed by a single whitespace.
 		if err := parser.expectByte(' '); err != nil {
-			return header{}, fmt.Errorf("expected whitespace after source address: %w", err)
+			return Header{}, fmt.Errorf("expected whitespace after source address: %w", err)
 		}
 
 		// Followed by the layer 3 destination address.
 		destAddress, err := parser.readUntilDelimiter(' ')
 		if err != nil {
-			return header{}, fmt.Errorf("error reading destination address bytes: %w", err)
+			return Header{}, fmt.Errorf("error reading destination address bytes: %w", err)
 		}
 		destIP := net.ParseIP(string(destAddress))
 		if destIP == nil {
-			return header{}, fmt.Errorf("error parsing destination address: %w", ErrInvalidProtocolHeader)
+			return Header{}, fmt.Errorf("error parsing destination address: %w", ErrInvalidProtocolHeader)
 		}
 
 		// Followed by a single whitespace.
 		if err := parser.expectByte(' '); err != nil {
-			return header{}, fmt.Errorf("expected whitespace after destination address: %w", err)
+			return Header{}, fmt.Errorf("expected whitespace after destination address: %w", err)
 		}
 
 		srcPort, err := parser.readUint16()
 		if err != nil {
-			return header{}, fmt.Errorf("error reading source port: %w", err)
+			return Header{}, fmt.Errorf("error reading source port: %w", err)
 		}
 
 		// Followed by a single whitespace.
 		if err := parser.expectByte(' '); err != nil {
-			return header{}, fmt.Errorf("expected whitespace after source port: %w", err)
+			return Header{}, fmt.Errorf("expected whitespace after source port: %w", err)
 		}
 
 		destPort, err := parser.readUint16()
 		if err != nil {
-			return header{}, fmt.Errorf("error reading destination port: %w", err)
+			return Header{}, fmt.Errorf("error reading destination port: %w", err)
 		}
 
 		// Followed by \r\n
 		if err := parser.expectCRLF(); err != nil {
-			return header{}, fmt.Errorf("expected whitespace after destination port: %w", err)
+			return Header{}, fmt.Errorf("expected whitespace after destination port: %w", err)
 		}
 
-		return header{
-				version:      protocolVersion1,
-				inetProtocol: string(inetProtocolAndFamily),
-				src:          srcIP,
-				dest:         destIP,
-				srcPort:      srcPort,
-				destPort:     destPort,
+		return Header{
+				Version:    ProtocolVersion1,
+				InetFamily: string(inetProtocolAndFamily),
+				Src:        net.TCPAddr{IP: srcIP, Port: int(srcPort)},
+				Dest:       net.TCPAddr{IP: destIP, Port: int(destPort)},
 			},
 			nil
 	}
 
-	return header{}, fmt.Errorf("unexpected protocol version: %w", ErrInvalidProtocolHeader)
+	return Header{}, fmt.Errorf("unexpected protocol version: %w", ErrInvalidProtocolHeader)
 }
 
 func isValidProtocolVersion1InetProtocolAndFamily(v string) bool {

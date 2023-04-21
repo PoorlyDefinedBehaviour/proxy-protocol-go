@@ -27,32 +27,40 @@ func TestWriteHeader(t *testing.T) {
 
 	tests := []struct {
 		description            string
-		header                 header
+		header                 Header
 		expectedErr            error
 		expectedWriterContents string
 	}{
 		{
 			description: "valid protocol version 1 header",
-			header: header{
-				version:      protocolVersion1,
-				inetProtocol: "TCP6",
-				src:          net.ParseIP("127.0.0.1"),
-				dest:         net.ParseIP("127.0.0.2"),
-				srcPort:      8080,
-				destPort:     8081,
+			header: Header{
+				Version:    ProtocolVersion1,
+				InetFamily: "TCP6",
+				Src: net.TCPAddr{
+					IP:   net.ParseIP("127.0.0.1"),
+					Port: 8080,
+				},
+				Dest: net.TCPAddr{
+					IP:   net.ParseIP("127.0.0.2"),
+					Port: 8081,
+				},
 			},
 			expectedWriterContents: "PROXY TCP6 127.0.0.1 127.0.0.2 8080 8081\r\n",
 			expectedErr:            nil,
 		},
 		{
 			description: "invalid protocol version, returns error",
-			header: header{
-				version:      3,
-				inetProtocol: "TCP6",
-				src:          net.ParseIP("127.0.0.1"),
-				dest:         net.ParseIP("127.0.0.2"),
-				srcPort:      8080,
-				destPort:     8081,
+			header: Header{
+				Version:    3,
+				InetFamily: "TCP6",
+				Src: net.TCPAddr{
+					IP:   net.ParseIP("127.0.0.1"),
+					Port: 8080,
+				},
+				Dest: net.TCPAddr{
+					IP:   net.ParseIP("127.0.0.2"),
+					Port: 8081,
+				},
 			},
 			expectedWriterContents: "",
 			expectedErr:            ErrInvalidProtocolHeader,
@@ -82,58 +90,56 @@ func TestParseProtocolHeader(t *testing.T) {
 	tests := []struct {
 		description string
 		input       string
-		expected    header
+		expected    Header
 		err         error
 	}{
 		{
 			description: "empty proxy protocol header, should return error",
 			input:       "",
-			expected: header{
-				version:      0,
-				inetProtocol: "",
-				srcPort:      0,
-				destPort:     0,
-				src:          nil,
-				dest:         nil,
+			expected: Header{
+				Version:    0,
+				InetFamily: "",
+				Src:        net.TCPAddr{},
+				Dest:       net.TCPAddr{},
 			},
 			err: ErrInvalidProtocolHeader,
 		},
 		{
 			description: "valid tcp4 header",
 			input:       "PROXY TCP4 255.255.255.255 255.255.255.254 65535 65534\r\n",
-			expected: header{
-				version:      protocolVersion1,
-				inetProtocol: "TCP4",
-				srcPort:      65535,
-				destPort:     65534,
-				src:          net.ParseIP("255.255.255.255"),
-				dest:         net.ParseIP("255.255.255.254"),
+			expected: Header{
+				Version:    ProtocolVersion1,
+				InetFamily: "TCP4",
+				Src: net.TCPAddr{
+					IP:   net.ParseIP("255.255.255.255"),
+					Port: 65535,
+				},
+				Dest: net.TCPAddr{
+					IP:   net.ParseIP("255.255.255.254"),
+					Port: 65534,
+				},
 			},
 			err: nil,
 		},
 		{
 			description: "valid unknown protocol header, should ignore everything after the protocol until \r\n is found",
 			input:       "PROXY UNKNOWN 255.255.255.255 255.255.255.254 65535 65534\r\n",
-			expected: header{
-				version:      protocolVersion1,
-				inetProtocol: protocolVersion1Unknown,
-				srcPort:      0,
-				destPort:     0,
-				src:          nil,
-				dest:         nil,
+			expected: Header{
+				Version:    ProtocolVersion1,
+				InetFamily: protocolVersion1Unknown,
+				Src:        net.TCPAddr{},
+				Dest:       net.TCPAddr{},
 			},
 			err: nil,
 		},
 		{
 			description: "invalid signature, should return error",
 			input:       "ANYTHING_THATS_NOT_PROXY TCP4 255.255.255.255 255.255.255.254 65535 65534\r\n",
-			expected: header{
-				version:      0,
-				inetProtocol: "",
-				srcPort:      0,
-				destPort:     0,
-				src:          nil,
-				dest:         nil,
+			expected: Header{
+				Version:    0,
+				InetFamily: "",
+				Src:        net.TCPAddr{},
+				Dest:       net.TCPAddr{},
 			},
 			err: ErrInvalidProtocolHeader,
 		},

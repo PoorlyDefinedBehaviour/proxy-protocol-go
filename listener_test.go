@@ -2,12 +2,12 @@ package proxyprotocol
 
 import (
 	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestListener(t *testing.T) {
@@ -26,28 +26,62 @@ func TestListener(t *testing.T) {
 			ProxyProtocolHeaderReadTimeout: 10 * time.Millisecond,
 		}
 
-		go func() {
-			clientConn, err := net.Dial("tcp", serverAddr)
-			assert.NoError(t, err)
-			defer clientConn.Close()
-			// Client does not send the proxy protocol header.
-			time.Sleep(10 * time.Second)
-		}()
+		clientConn, err := net.Dial("tcp", serverAddr)
 
-		require.Eventuallyf(t, func() bool {
-			_, err := listener.Accept()
-			return strings.Contains(err.Error(), "i/o timeout")
-		},
-			100*time.Millisecond,
-			10*time.Millisecond,
-			"the server should timeout reading the proxy protocol header because the client took to long to send it",
-		)
+		assert.NoError(t, err)
+
+		defer clientConn.Close()
+
+		serverSideConn, err := listener.Accept()
+
+		assert.True(t, strings.Contains(err.Error(), "i/o timeout"))
+		assert.Nil(t, serverSideConn)
 	})
 
 	t.Run("listener adapter wraps a net.Listener and reads the proxy protocol header", func(t *testing.T) {
 		t.Parallel()
 
-		serverAddr := "localhost:9879"
+		serverAddr := "localhost:9881"
+
+		ln, err := net.Listen("tcp", serverAddr)
+		assert.NoError(t, err)
+
+		listener := ListenerAdapter{
+			Listener:                       ln,
+			ProxyProtocolHeaderReadTimeout: 5 * time.Second,
+		}
+		defer listener.Close()
+
+		clientSideConn, err := net.Dial("tcp", serverAddr)
+		assert.NoError(t, err)
+		defer clientSideConn.Close()
+
+		header := Header{
+			Version:    ProtocolVersion1,
+			InetFamily: "TCP4",
+			Src: net.TCPAddr{
+				IP:   net.ParseIP("127.0.0.1"),
+				Port: 9000,
+			},
+			Dest: net.TCPAddr{
+				IP:   net.ParseIP("127.0.0.2"),
+				Port: 9001,
+			},
+		}
+
+		assert.NoError(t, WriteHeader(header, clientSideConn))
+
+		serverSideConn, err := listener.Accept()
+		assert.NoError(t, err)
+		defer serverSideConn.Close()
+
+		assert.Equal(t, &header.Src, serverSideConn.RemoteAddr())
+	})
+
+	t.Run("using the listener in a http server", func(t *testing.T) {
+		t.Parallel()
+
+		serverAddr := "localhost:9883"
 
 		ln, err := net.Listen("tcp", serverAddr)
 		assert.NoError(t, err)
@@ -57,55 +91,45 @@ func TestListener(t *testing.T) {
 			ProxyProtocolHeaderReadTimeout: 5 * time.Second,
 		}
 
-		type data struct {
-			remoteAddr net.Addr
-			payload    string
-		}
-
-		dataChan := make(chan data)
-
-		go func() {
-			serverConn, err := listener.Accept()
-			if err != nil {
-				panic(err)
-			}
-			defer serverConn.Close()
-			buffer := make([]byte, 5)
-			_, err = serverConn.Read(buffer)
-			if err != nil {
-				panic(err)
-			}
-			dataChan <- data{remoteAddr: serverConn.RemoteAddr(), payload: string(buffer)}
-		}()
-
-		clientConn, err := net.Dial("tcp", serverAddr)
-		assert.NoError(t, err)
-		defer clientConn.Close()
-
-		header := header{
-			version:      protocolVersion1,
-			src:          net.ParseIP("127.0.0.3"),
-			dest:         net.ParseIP("127.0.0.4"),
-			inetProtocol: "TCP4",
-			srcPort:      8080,
-			destPort:     8081,
-		}
-
-		assert.NoError(t, WriteHeader(header, clientConn))
-
-		_, err = clientConn.Write([]byte("hello"))
+		clientSideConn, err := net.Dial("tcp", serverAddr)
 		assert.NoError(t, err)
 
-		require.Eventuallyf(t, func() bool {
-			data := <-dataChan
-			tcpAddr := data.remoteAddr.(*net.TCPAddr)
+		header := Header{
+			Version:    ProtocolVersion1,
+			InetFamily: "TCP4",
+			Src: net.TCPAddr{
+				IP:   net.ParseIP("127.0.0.1"),
+				Port: 9000,
+			},
+			Dest: net.TCPAddr{
+				IP:   net.ParseIP("127.0.0.2"),
+				Port: 9001,
+			},
+		}
 
-			return tcpAddr.IP.Equal(header.src) && tcpAddr.Port == int(header.srcPort) && data.payload == "hello"
-		},
-			500*time.Millisecond,
-			10*time.Millisecond,
-			"server should receive a connection with the remote addr that came in the proxy protocol header",
-		)
+		assert.NoError(t, WriteHeader(header, clientSideConn))
+
+		_, err = clientSideConn.Write([]byte("GET / HTTP/1.0\r\n\r\n"))
+		assert.NoError(t, err)
+
+		var remoteAddrReceivedByHttpServer string
+
+		server := &http.Server{Addr: "9500" /*ReadHeaderTimeout: 50 * time.Millisecond, ReadTimeout: 50 * time.Millisecond*/}
+		server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			if _, err := w.Write([]byte(r.RemoteAddr)); err != nil {
+				panic(err)
+			}
+
+			remoteAddrReceivedByHttpServer = r.RemoteAddr
+
+			// Close the server for the test to exit.
+			if err := server.Close(); err != nil {
+				panic(err)
+			}
+		})
+
+		assert.Equal(t, http.ErrServerClosed, server.Serve(&listener))
+		assert.Equal(t, header.Src.String(), remoteAddrReceivedByHttpServer)
 	})
-
 }
